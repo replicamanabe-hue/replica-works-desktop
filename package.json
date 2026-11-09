@@ -1,6 +1,6 @@
 {
   "name": "replica-works-desktop",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Replica Works の Mac / Windows デスクトップアプリ（Tauri 2）",
   "scripts": {

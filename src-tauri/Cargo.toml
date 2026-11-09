@@ -1,6 +1,6 @@
 [package]
 name = "replica-works-desktop"
-version = "1.0.0"
+version = "1.0.1"
 description = "Replica Works desktop shell"
 authors = ["Replica LLC"]
 license = ""

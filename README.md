@@ -22,16 +22,25 @@ Web 側（replica-works）はデスクトップ版を UA の `ReplicaWorksDeskto
 
 ## 配布
 
-タグを push すると GitHub Actions（`.github/workflows/release.yml`）が Mac（Universal `.dmg`）と
-Windows（`-setup.exe` と `.msi`）を作り、GitHub Release に載せる。
+1. タグを push すると GitHub Actions（`.github/workflows/release.yml`）が Mac（Universal `.dmg`）と
+   Windows（`-setup.exe` と `.msi`）を作り、GitHub Release に載せる。
+2. replica-works 側で `node scripts/upload-desktop.mjs vX.Y.Z` を実行すると、その Release のファイルを
+   Firebase Storage の `desktop/` にコピーし、`latest.json` を更新する（GitHub の Release 配信が不安定だったため、
+   ユーザーへの配布は Storage から行う）。
 
 ```bash
 # 版を上げる: package.json / src-tauri/tauri.conf.json / src-tauri/Cargo.toml の version をそろえてから
-git tag v1.0.0 && git push origin v1.0.0
+git tag v1.0.2 && git push origin v1.0.2
+# Actions が終わったら（replica-works で）
+node scripts/upload-desktop.mjs v1.0.2
 ```
 
-ダウンロード: https://github.com/replicamanabe-hue/replica-works-desktop/releases/latest
-（管理画面「管理者」ページにも同じリンクがある）
+ダウンロード（誰でも可）:
+- Mac: https://replica-works--replica-d2b34.asia-east1.hosted.app/download/mac
+- Windows: https://replica-works--replica-d2b34.asia-east1.hosted.app/download/windows （MSI は `/download/windows-msi`）
+
+管理画面「管理者」ページにも同じリンクと現在の版が出る。Windows の Actions ジョブが 504 で落ちたら
+`gh run rerun <run-id> --failed` で再実行する。
 
 ### Mac の署名・公証（任意だが推奨）
 

@@ -5,76 +5,21 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Replica Works</title>
 <style>
-  :root { color-scheme: light; }
   html, body { height: 100%; margin: 0; }
-  body {
-    font-family: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
-    background: #ffffff; color: #13161a;
-    display: flex; align-items: center; justify-content: center;
-    -webkit-user-select: none; user-select: none;
-  }
-  main { width: min(520px, calc(100vw - 48px)); }
-  .eyebrow { font-size: 11px; letter-spacing: .2em; color: #5c6168; margin: 0 0 6px; }
-  h1 { font-size: 22px; margin: 0 0 28px; font-weight: 700; }
-  .grid { display: grid; gap: 14px; grid-template-columns: 1fr 1fr; }
-  @media (max-width: 480px) { .grid { grid-template-columns: 1fr; } }
-  button.card {
-    appearance: none; text-align: left; cursor: pointer;
-    background: #fff; color: inherit; border: 1px solid #13161a; border-radius: 12px;
-    padding: 22px 20px; font: inherit; min-height: 132px;
-    display: flex; flex-direction: column; justify-content: space-between; gap: 12px;
-    transition: background .12s;
-  }
-  button.card:hover { background: #f6f6f6; }
-  button.card:focus-visible { outline: 2px solid #edae4d; outline-offset: 2px; }
-  button.card b { font-size: 17px; }
-  button.card span { font-size: 12px; color: #5c6168; line-height: 1.6; }
-  button.card i { display: block; height: 3px; width: 36px; background: #edae4d; border-radius: 2px; }
-  label { display: flex; align-items: center; gap: 8px; margin-top: 22px; font-size: 12px; color: #5c6168; }
-  .hint { font-size: 11px; color: #8a8f96; margin-top: 10px; line-height: 1.7; }
-  kbd { font: inherit; border: 1px solid #d9dbde; border-radius: 4px; padding: 0 5px; }
+  body { font-family: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic UI", "Meiryo", system-ui, sans-serif; background: #fff; color: #13161a; display: flex; align-items: center; justify-content: center; -webkit-user-select: none; user-select: none; }
+  main { text-align: center; }
+  p { margin: 0 0 16px; font-size: 14px; color: #5c6168; }
+  .eyebrow { font-size: 11px; letter-spacing: .2em; margin-bottom: 24px; }
+  button { font: inherit; border: 1px solid #13161a; background: #fff; color: inherit; border-radius: 8px; padding: 10px 20px; cursor: pointer; }
+  button:hover { background: #f6f6f6; }
+  button:focus-visible { outline: 2px solid #edae4d; outline-offset: 2px; }
 </style>
 </head>
 <body>
 <main>
   <p class="eyebrow">REPLICA WORKS</p>
-  <h1>どちらを開きますか？</h1>
-  <div class="grid">
-    <button class="card" data-target="admin" type="button">
-      <i></i>
-      <b>社内管理画面</b>
-      <span>案件・タスク・契約・書類・チャット。<br>スタッフ用（Google ログイン）</span>
-    </button>
-    <button class="card" data-target="portal" type="button">
-      <i></i>
-      <b>お客様ページ</b>
-      <span>契約・見積・請求書・図面・進捗の確認。<br>お客様用（メールの確認コードでログイン）</span>
-    </button>
-  </div>
-  <label><input type="checkbox" id="remember" checked> 次回からこの画面を飛ばして、選んだ方を直接開く</label>
-  <p class="hint">あとから切り替えるときは、メニューの「表示」から。<kbd>⌘1</kbd> / <kbd>Ctrl+1</kbd> 社内管理画面、<kbd>⌘2</kbd> / <kbd>Ctrl+2</kbd> お客様ページ、<kbd>⌘0</kbd> / <kbd>Ctrl+0</kbd> この画面。</p>
+  <p>Replica Works に接続できませんでした。<br>インターネット接続を確認して、もう一度お試しください。</p>
+  <button type="button" onclick="location.replace((window.__REPLICA_DESKTOP__ && window.__REPLICA_DESKTOP__.startUrl) || 'https://replica-works--replica-d2b34.asia-east1.hosted.app/portal')">再試行</button>
 </main>
-<script>
-  // 本番 URL は Rust 側（lib.rs）の初期化スクリプトが window.__REPLICA_DESKTOP__ に入れる
-  const cfg = window.__REPLICA_DESKTOP__ || {};
-  const urls = { admin: cfg.adminUrl || "https://replica-works--replica-d2b34.asia-east1.hosted.app/", portal: cfg.portalUrl || "https://replica-works--replica-d2b34.asia-east1.hosted.app/portal" };
-  const KEY = "replica-works-desktop:target";
-  const params = new URLSearchParams(location.search);
-  const go = params.get("go");          // メニューからの切替: ?go=admin / ?go=portal
-  const stay = params.has("choose");    // メニューの「切替画面」: 記憶があっても止まる
-  function open(target, remember) {
-    try { if (remember) localStorage.setItem(KEY, target); else localStorage.removeItem(KEY); } catch {}
-    location.replace(urls[target] || urls.admin);
-  }
-  if (go === "admin" || go === "portal") { open(go, true); }
-  else {
-    let saved = null;
-    try { saved = localStorage.getItem(KEY); } catch {}
-    if (!stay && (saved === "admin" || saved === "portal")) open(saved, true);
-  }
-  for (const b of document.querySelectorAll("button.card")) {
-    b.addEventListener("click", () => open(b.dataset.target, document.getElementById("remember").checked));
-  }
-</script>
 </body>
 </html>

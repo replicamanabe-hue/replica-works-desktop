@@ -1,6 +1,7 @@
 //! Replica Works デスクトップ版（Mac / Windows）。
-//! 本番 URL をネイティブ窓で表示する薄いシェル。Web 側（Next.js）には Tauri API を渡さず、
-//! 切替画面（ui/index.html）だけをローカルで持つ。
+//! 本番 URL をネイティブ窓で表示する薄いシェル。入口はお客様ページのログイン画面で、
+//! 管理者はログイン後にメニュー「管理画面に切り替え」で管理画面へ入る（Web 側の /portal/switch）。
+//! Web 側には Tauri API を渡さない。ローカル HTML（ui/）は接続できなかったときの案内だけ。
 
 use std::{
   collections::HashMap,
@@ -51,16 +52,13 @@ fn open_external<R: Runtime>(app: &AppHandle<R>, url: &Url) {
   }
 }
 
-/// 切替画面（ローカル index.html）の URL。OS によって tauri://localhost か http://tauri.localhost になるので、
-/// 窓を作った直後の URL から覚えておく
-struct Home(Mutex<Option<Url>>);
 /// ダウンロード先。macOS は完了イベントにパスが乗らないので、開始時に覚えておく
 struct Downloads(Mutex<HashMap<String, PathBuf>>);
 struct Zoom(Mutex<f64>);
 
-fn home_url<R: Runtime>(app: &AppHandle<R>, query: &str) -> Option<Url> {
-  let home = app.state::<Home>().0.lock().ok()?.clone()?;
-  home.join(&format!("index.html{query}")).ok()
+/// 起動時に開くページ。お客様ページのログインが入口で、管理者はログイン後にメニューの「管理画面に切り替え」で管理画面へ
+fn start_url() -> Url {
+  Url::parse(&format!("{}/portal", BASE_URL.trim_end_matches('/'))).expect("BASE_URL")
 }
 
 fn navigate(win: &WebviewWindow, url: Url) {
@@ -84,9 +82,7 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     "表示",
     true,
     &[
-      &MenuItem::with_id(app, "go-admin", "社内管理画面", true, Some("CmdOrCtrl+1"))?,
-      &MenuItem::with_id(app, "go-portal", "お客様ページ", true, Some("CmdOrCtrl+2"))?,
-      &MenuItem::with_id(app, "go-home", "切替画面", true, Some("CmdOrCtrl+0"))?,
+      &MenuItem::with_id(app, "home", "ホーム", true, Some("CmdOrCtrl+Shift+H"))?,
       &PredefinedMenuItem::separator(app)?,
       &MenuItem::with_id(app, "back", "戻る", true, Some("CmdOrCtrl+["))?,
       &MenuItem::with_id(app, "forward", "進む", true, Some("CmdOrCtrl+]"))?,
@@ -187,21 +183,7 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 fn on_menu(app: &AppHandle, event: MenuEvent) {
   let Some(win) = app.get_webview_window("main") else { return };
   match event.id().as_ref() {
-    "go-admin" => {
-      if let Some(u) = home_url(app, "?go=admin") {
-        navigate(&win, u);
-      }
-    }
-    "go-portal" => {
-      if let Some(u) = home_url(app, "?go=portal") {
-        navigate(&win, u);
-      }
-    }
-    "go-home" => {
-      if let Some(u) = home_url(app, "?choose") {
-        navigate(&win, u);
-      }
-    }
+    "home" => navigate(&win, start_url()),
     "back" => {
       let _ = win.eval("history.back()");
     }
@@ -223,11 +205,11 @@ fn on_menu(app: &AppHandle, event: MenuEvent) {
     }
     "open-web" => {
       if let Ok(u) = win.url() {
-        // アプリ内の切替画面なら本番トップを開く
+        // アプリ内のローカル画面（接続失敗など）なら入口を開く
         let target = if stays_inside(&u) && u.scheme() != "tauri" && u.host_str() != Some("tauri.localhost") {
           u
         } else {
-          Url::parse(BASE_URL).expect("BASE_URL")
+          start_url()
         };
         open_external(app, &target);
       }
@@ -253,7 +235,6 @@ pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
     .plugin(tauri_plugin_window_state::Builder::default().build())
-    .manage(Home(Mutex::new(None)))
     .manage(Downloads(Mutex::new(HashMap::new())))
     .manage(Zoom(Mutex::new(1.0)))
     .setup(|app| {
@@ -268,7 +249,7 @@ pub fn run() {
       let version = app.package_info().version.to_string();
       let platform = if cfg!(target_os = "macos") { "macos" } else if cfg!(target_os = "windows") { "windows" } else { "linux" };
       let init_script = format!(
-        r#"window.__REPLICA_DESKTOP__ = {{ platform: "{platform}", version: "{version}", adminUrl: "{base}/", portalUrl: "{base}/portal" }};
+        r#"window.__REPLICA_DESKTOP__ = {{ platform: "{platform}", version: "{version}", startUrl: "{base}/portal" }};
 (function () {{ var f = function () {{ document.documentElement && document.documentElement.classList.add("replica-desktop"); }}; if (document.documentElement) f(); else document.addEventListener("DOMContentLoaded", f); }})();"#,
         base = BASE_URL.trim_end_matches('/'),
       );
@@ -277,7 +258,8 @@ pub fn run() {
       let new_window_handle = app.handle().clone();
       let dl_handle = app.handle().clone();
 
-      let win = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+      // 入口はお客様ページ（ログイン画面）。ui/index.html は接続できなかったときの案内にだけ使う
+      let _win = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(start_url()))
         .title("Replica Works")
         .inner_size(1280.0, 860.0)
         .min_inner_size(900.0, 600.0)
@@ -325,12 +307,6 @@ pub fn run() {
           true
         })
         .build()?;
-
-      if let Ok(u) = win.url() {
-        if let Ok(mut h) = app.state::<Home>().0.lock() {
-          *h = Some(u);
-        }
-      }
 
       let menu = build_menu(app.handle())?;
       app.set_menu(menu)?;

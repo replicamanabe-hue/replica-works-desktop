@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "切替画面（ローカル HTML）に許す最小権限。Web 側（本番 URL）には Tauri API を渡さない",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

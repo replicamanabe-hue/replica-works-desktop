@@ -1,0 +1,44 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Replica Works",
+  "version": "1.0.0",
+  "identifier": "com.replicallc.replicaworks.desktop",
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg", "nsis", "msi"],
+    "publisher": "合同会社Replica",
+    "copyright": "© Replica LLC",
+    "category": "Business",
+    "shortDescription": "Replica Works",
+    "longDescription": "合同会社Replica の案件・契約・書類・進捗を扱う Replica Works と、お客様ページのデスクトップ版",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["Japanese", "English"]
+      },
+      "wix": {
+        "language": "ja-JP"
+      }
+    }
+  }
+}

@@ -1,0 +1,26 @@
+[package]
+name = "replica-works-desktop"
+version = "1.0.0"
+description = "Replica Works desktop shell"
+authors = ["Replica LLC"]
+license = ""
+repository = "https://github.com/replicamanabe-hue/replica-works-desktop"
+edition = "2024"
+rust-version = "1.90"
+
+[lib]
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.4", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.12.5", features = [] }
+tauri-plugin-log = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-window-state = "2"
+url = "2"

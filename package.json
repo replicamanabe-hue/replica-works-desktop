@@ -1,0 +1,15 @@
+{
+  "name": "replica-works-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Replica Works の Mac / Windows デスクトップアプリ（Tauri 2）",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "icon": "tauri icon app-icon.png"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.4"
+  }
+}

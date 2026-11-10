@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Mac App Store は App Sandbox が必須 -->
+  <key>com.apple.security.app-sandbox</key>
+  <true/>
+  <!-- 本番サイトへの接続（WKWebView） -->
+  <key>com.apple.security.network.client</key>
+  <true/>
+  <!-- ダウンロードを ~/Downloads に保存して Finder で表示する -->
+  <key>com.apple.security.files.downloads.read-write</key>
+  <true/>
+  <!-- チーム ID + バンドル ID（Provisioning Profile と一致させる） -->
+  <key>com.apple.application-identifier</key>
+  <string>LD6XFR33N5.com.replicallc.replicaworks</string>
+  <key>com.apple.developer.team-identifier</key>
+  <string>LD6XFR33N5</string>
+</dict>
+</plist>

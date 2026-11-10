@@ -1,5 +1,7 @@
 # タグ v* を push すると Mac（Universal）と Windows（x64）の配布物を作って GitHub Release に載せる。
 # Mac の署名・公証は secrets が揃っているときだけ行う（無ければ未署名で出る。初回起動は右クリック→開く）。
+# Windows は Variables に MSIX_IDENTITY_NAME / MSIX_PUBLISHER があるとき Microsoft Store 提出用の .msix も作る（未署名。Store が署名する）。
+# Mac App Store 用の .pkg は手元の Mac で scripts/appstore-mac.sh（証明書と Provisioning Profile が要るため）。
 name: release
 
 on:
@@ -73,3 +75,14 @@ jobs:
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
+
+      # Microsoft Store 提出用の MSIX（Partner Center の製品 ID を Variables に入れてあるときだけ）
+      - name: MSIX for Microsoft Store
+        if: runner.os == 'Windows' && vars.MSIX_IDENTITY_NAME != '' && vars.MSIX_PUBLISHER != ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MSIX_IDENTITY_NAME: ${{ vars.MSIX_IDENTITY_NAME }}
+          MSIX_PUBLISHER: ${{ vars.MSIX_PUBLISHER }}
+          MSIX_PUBLISHER_DISPLAY_NAME: ${{ vars.MSIX_PUBLISHER_DISPLAY_NAME }}
+        run: ./scripts/make-msix.ps1 -Tag "${{ github.ref_name }}"

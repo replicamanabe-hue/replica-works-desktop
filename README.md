@@ -101,6 +101,8 @@ scripts/appstore-mac.sh
 ```
 
 `dist/Replica Works_<版>_appstore.pkg` ができ、API キーがあればそのまま App Store Connect に上がる（無ければ Transporter.app で上げる）。
+Apple は「Intel 対応（Universal）か、最低 macOS 12 以上」を要求するので Universal で作る。Homebrew の `rust` には Intel 用の標準ライブラリが無いため、
+`brew install rustup`（keg-only で既存の rust と衝突しない）を入れておくと、スクリプトがそのツールチェーンで両アーキテクチャをビルドする。
 同じ版を直して再提出するときは `BUILD_NUMBER=2` のように増やす。
 証明書名はキーチェーンアクセスか `security find-identity -v -p codesigning` で確認する。
 

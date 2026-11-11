@@ -23,20 +23,38 @@ PROFILE="src-tauri/appstore/ReplicaWorks.provisionprofile"
 [ -f "$PROFILE" ] || { echo "Provisioning Profile がありません: $PROFILE" >&2; exit 1; }
 
 VERSION=$(node -p "require('./package.json').version")
-APP="src-tauri/target/universal-apple-darwin/release/bundle/macos/Replica Works.app"
 OUT="dist/Replica Works_${VERSION}_appstore.pkg"
 mkdir -p dist
 
-rustup target add aarch64-apple-darwin x86_64-apple-darwin >/dev/null
+# Intel 用の標準ライブラリがあれば Universal、無ければ Apple Silicon 専用で作る（App Store はどちらも受け付ける）。
+# rustup があれば両方入れる。Homebrew の rust は rustup が無いので、入っているものだけで判断する
+# Homebrew の rustup（keg-only。brew install rustup）があれば、そのツールチェーンを優先する
+if [ -d /opt/homebrew/opt/rustup/bin ]; then
+  export PATH="/opt/homebrew/opt/rustup/bin:$PATH"
+fi
+if command -v rustup >/dev/null 2>&1; then
+  rustup toolchain list 2>/dev/null | grep -q '^stable' || rustup toolchain install stable --profile minimal
+  rustup target add aarch64-apple-darwin x86_64-apple-darwin >/dev/null
+fi
+RUSTLIB="$(rustc --print sysroot)/lib/rustlib"
+if [ -d "$RUSTLIB/x86_64-apple-darwin/lib" ] && [ -d "$RUSTLIB/aarch64-apple-darwin/lib" ]; then
+  TARGET_ARGS=(--target universal-apple-darwin)
+  APP="src-tauri/target/universal-apple-darwin/release/bundle/macos/Replica Works.app"
+  echo "ビルド: Universal（Apple Silicon + Intel）"
+else
+  TARGET_ARGS=()
+  APP="src-tauri/target/release/bundle/macos/Replica Works.app"
+  echo "ビルド: この Mac のアーキテクチャのみ（Intel 用の Rust 標準ライブラリが無いため）"
+fi
 
 # App Store 用の設定（Sandbox の entitlements と Provisioning Profile）を重ねてビルド
 export APPLE_SIGNING_IDENTITY
-npm run tauri -- build --no-bundle --target universal-apple-darwin
+npm run tauri -- build --no-bundle ${TARGET_ARGS[@]+"${TARGET_ARGS[@]}"}
 EXTRA=()
 if [ -n "${BUILD_NUMBER:-}" ]; then
   EXTRA=(--config "{\"bundle\":{\"macOS\":{\"bundleVersion\":\"$BUILD_NUMBER\"}}}")
 fi
-npm run tauri -- bundle --bundles app --target universal-apple-darwin --config src-tauri/tauri.appstore.conf.json "${EXTRA[@]}"
+npm run tauri -- bundle --bundles app ${TARGET_ARGS[@]+"${TARGET_ARGS[@]}"} --config src-tauri/tauri.appstore.conf.json ${EXTRA[@]+"${EXTRA[@]}"}
 
 echo "--- 署名と entitlements の確認"
 codesign -dv --entitlements - "$APP" 2>&1 | grep -E "Authority=|app-sandbox|application-identifier" || true

@@ -2,8 +2,8 @@
 # Mac App Store 提出用の .pkg を作り、環境変数があれば App Store Connect にアップロードする。
 # 手元の Mac（Xcode 入り）で実行する。証明書はキーチェーンに入っていること。
 #
-#   APPLE_SIGNING_IDENTITY   必須。アプリ署名。例: "Apple Distribution: 合同会社Replica (LD6XFR33N5)"
-#   APPLE_INSTALLER_IDENTITY 必須。pkg 署名。例: "3rd Party Mac Developer Installer: 合同会社Replica (LD6XFR33N5)"
+#   APPLE_SIGNING_IDENTITY   任意。アプリ署名。未指定ならキーチェーンの "Apple Distribution: …" を使う
+#   APPLE_INSTALLER_IDENTITY 任意。pkg 署名。未指定ならキーチェーンの "3rd Party Mac Developer Installer: …" を使う
 #   BUILD_NUMBER             任意。同じ版を再提出するときに増やす（CFBundleVersion）
 #   APPLE_API_KEY_ID / APPLE_API_ISSUER  任意。両方あれば altool でアップロードまで行う
 #                            （鍵 AuthKey_<KEY_ID>.p8 は ~/.appstoreconnect/private_keys に置く）
@@ -11,8 +11,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-: "${APPLE_SIGNING_IDENTITY:?APPLE_SIGNING_IDENTITY を設定してください（例: Apple Distribution: ... (LD6XFR33N5)）}"
-: "${APPLE_INSTALLER_IDENTITY:?APPLE_INSTALLER_IDENTITY を設定してください（例: 3rd Party Mac Developer Installer: ... (LD6XFR33N5)）}"
+# 署名 ID が未指定ならキーチェーンから拾う（scripts/apple-setup.mjs で入れたもの）
+IDS=$(security find-identity -v 2>/dev/null || true)
+APPLE_SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:-$(printf '%s' "$IDS" | grep -o '"Apple Distribution: [^"]*"' | head -1 | tr -d '"')}"
+APPLE_INSTALLER_IDENTITY="${APPLE_INSTALLER_IDENTITY:-$(printf '%s' "$IDS" | grep -o '"3rd Party Mac Developer Installer: [^"]*"' | head -1 | tr -d '"')}"
+[ -n "$APPLE_SIGNING_IDENTITY" ] || { echo "Apple Distribution の証明書がキーチェーンにありません。先に node scripts/apple-setup.mjs を実行してください" >&2; exit 1; }
+[ -n "$APPLE_INSTALLER_IDENTITY" ] || { echo "Mac Installer Distribution の証明書がキーチェーンにありません。先に node scripts/apple-setup.mjs を実行してください" >&2; exit 1; }
+echo "アプリ署名: $APPLE_SIGNING_IDENTITY"
+echo "pkg 署名:  $APPLE_INSTALLER_IDENTITY"
 PROFILE="src-tauri/appstore/ReplicaWorks.provisionprofile"
 [ -f "$PROFILE" ] || { echo "Provisioning Profile がありません: $PROFILE" >&2; exit 1; }
 

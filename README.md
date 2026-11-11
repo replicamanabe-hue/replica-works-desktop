@@ -70,16 +70,25 @@ Actions が署名と公証まで行う。
 バンドル ID は iOS 版と同じ `com.replicallc.replicaworks` にしてあり、App Store Connect の既存アプリ「Replica Works」に
 macOS を **プラットフォーム追加** する形で載せる（掲載が 1 つにまとまる）。
 
-1 回だけの準備（Apple Developer、Team `LD6XFR33N5`）:
+1 回だけの準備（Apple Developer、Team `LD6XFR33N5`）。手作業は API キーを作るところだけで、残りは `scripts/apple-setup.mjs` が行う:
 
-1. 証明書を 2 枚作ってこの Mac のキーチェーンに入れる（developer.apple.com → Certificates）
-   - **Apple Distribution**（アプリ本体の署名。iOS 版で作ったものがあればそれで良い）
-   - **Mac Installer Distribution**（`.pkg` の署名。キーチェーンでは `3rd Party Mac Developer Installer: …` と出る）
-2. Profiles で種類 **Mac App Store Connect** のプロファイルを App ID `com.replicallc.replicaworks` に対して作り、
-   `src-tauri/appstore/ReplicaWorks.provisionprofile` として保存する（この場所は git に入らない）
-3. App Store Connect → アプリ「Replica Works」→「プラットフォームを追加」→ macOS。スクリーンショットや説明文を入れる
-4. （アップロードを自動化するなら）App Store Connect → ユーザとアクセス → 統合 → チーム キー で Developer 権限のキーを作り、
-   `AuthKey_<KEY_ID>.p8` を `~/.appstoreconnect/private_keys/` に置く
+1. App Store Connect → ユーザとアクセス → 統合 → **チームキー** で、役割 **Admin** のキーを作る（証明書の発行に Admin が要る）。
+   Issuer ID とキー ID を控え、落ちてきた `AuthKey_<キーID>.p8` を `~/.appstoreconnect/private_keys/` に置く
+2. 実行する
+
+   ```bash
+   APPLE_API_KEY_ID=<キーID> APPLE_API_ISSUER=<Issuer ID> node scripts/apple-setup.mjs
+   ```
+
+   署名鍵と CSR を `~/.appstoreconnect/replica-works-mac/` に作り、証明書 **Apple Distribution** と **Mac Installer Distribution** を発行して
+   キーチェーンに入れ、Provisioning Profile（種類 Mac App Store Connect、App ID `com.replicallc.replicaworks`）を
+   `src-tauri/appstore/ReplicaWorks.provisionprofile` に保存し、App Store Connect の既存アプリに macOS の版を追加する。
+   何度実行しても同じ結果になる（あるものは使い、無いものだけ作る）
+3. App Store Connect → アプリ「Replica Works」→ macOS の版で、スクリーンショット・説明文・カテゴリ（ビジネス）・年齢区分・
+   「App Review に関する情報」（デモログイン: replica-works の `REVIEW_EMAIL` / `REVIEW_CODE`）を入れる
+
+手で行う場合は developer.apple.com の Certificates で上記 2 種類の証明書を CSR `~/.appstoreconnect/replica-works-mac/request.csr` から作り、
+Profiles で種類 **Mac App Store Connect** のプロファイルを作って同じ場所に置く。
 
 提出のたびに:
 

@@ -12,8 +12,10 @@ Web 側を直せばアプリ側も自動で新しくなる。
   お客様ページのログインから管理画面のセッションを作る。管理者から外せば次の操作から入れなくなる）
 - 管理画面の「お客様ページ」ボタンで戻れる
 - メニュー「表示」: ホーム（⌘⇧H / Ctrl+Shift+H）、戻る・進む・再読み込み・拡大縮小・フルスクリーン
-- 外部サイト、PDF（別窓で開くリンク）、`mailto:` などは OS の既定ブラウザ・アプリで開く
-- ファイルのダウンロードは OS の「ダウンロード」フォルダへ保存し、保存後にフォルダで表示する
+- 別窓で開くリンクのうち、同じサイトのファイル（領収書・契約書 PDF・「新しいタブで開く」）はログインが要るのでアプリ内の別窓で開く
+- 外部サイト（http / https）と `mailto:` / `tel:` は OS の既定ブラウザ・アプリで開く。それ以外の種類の URL は開かない
+- ファイルのダウンロードは本番サイトのものだけ受け付け、OS の「ダウンロード」フォルダへ保存して、保存後にフォルダで表示する
+- 起動時に接続を確かめ、つながらないときは案内と「再試行」を出す（オンラインに戻ると自動で再試行）
 - 窓の位置・大きさを記憶する
 
 Web 側（replica-works）はデスクトップ版を UA の `ReplicaWorksDesktop/<版>` か
@@ -23,7 +25,8 @@ Web 側（replica-works）はデスクトップ版を UA の `ReplicaWorksDeskto
 ## 配布
 
 1. タグを push すると GitHub Actions（`.github/workflows/release.yml`）が Mac（Universal `.dmg`）と
-   Windows（`-setup.exe` と `.msi`）を作り、GitHub Release に載せる。
+   Windows（`-setup.exe` と `.msi`）を作り、GitHub Release に載せる。Release は下書きで作り、両方のビルドが
+   成功したときに公開する。タグと 3 つの version が食い違っていると最初に止まる。
 2. replica-works 側で `node scripts/upload-desktop.mjs vX.Y.Z` を実行すると、その Release のファイルを
    Firebase Storage の `desktop/` にコピーし、`latest.json` を更新する（GitHub の Release 配信が不安定だったため、
    ユーザーへの配布は Storage から行う）。
@@ -40,11 +43,12 @@ node scripts/upload-desktop.mjs v1.0.2
 - Windows: https://replica-works--replica-d2b34.asia-east1.hosted.app/download/windows （MSI は `/download/windows-msi`）
 
 管理画面「管理者」ページにも同じリンクと現在の版が出る。Windows の Actions ジョブが 504 で落ちたら
-`gh run rerun <run-id> --failed` で再実行する。
+`gh run rerun <run-id> --failed` で再実行する（それまで Release は下書きのまま）。
 
 ### Mac の署名・公証（任意だが推奨）
 
-未署名のままだと初回起動時に「開発元を確認できません」と出る（右クリック→「開く」で起動できる）。
+未署名のままだと初回起動時に「開発元を確認できません」と出る（一度開こうとしたあと、システム設定 → プライバシーとセキュリティ →
+「このまま開く」で起動できる。macOS 15 以降は右クリック→「開く」では通らない）。
 Apple Developer（Team `LD6XFR33N5`）の **Developer ID Application** 証明書を作って、リポジトリの Secrets に入れると
 Actions が署名と公証まで行う。
 
@@ -107,8 +111,9 @@ Apple は「Intel 対応（Universal）か、最低 macOS 12 以上」を要求�
 証明書名はキーチェーンアクセスか `security find-identity -v -p codesigning` で確認する。
 
 App Store 向けビルドだけ `src-tauri/tauri.appstore.conf.json` を重ねて、App Sandbox の entitlements
-（`src-tauri/Entitlements.appstore.plist`: ネットワーク接続とダウンロードフォルダへの書き込み）と Provisioning Profile を埋め込む。
-`src-tauri/Info.plist` は暗号輸出の申告（HTTPS のみなので免除）で、どのビルドにも入る。
+（`src-tauri/Entitlements.appstore.plist`: ネットワーク接続、ダウンロードフォルダへの書き込み、ファイル選択で選んだファイルの読み書き）と
+Provisioning Profile を埋め込む。
+`src-tauri/Info.plist` は暗号輸出の申告（HTTPS のみなので免除）と既定の言語（日本語）で、どのビルドにも入る。
 
 ### Microsoft Store
 
@@ -133,7 +138,8 @@ Microsoft Store は exe/msi をそのまま出すと有料のコード署名証�
 Partner Center の提出でその `.msix` をアップロードし、審査に出す。`runFullTrust` 機能の理由を聞かれたら
 「デスクトップ（Win32）アプリのため」と書く。
 
-- WebView2 ランタイムは Windows 11 に標準で入っている。Windows 10 で無い場合はアプリが初回にインストールを案内する
+- WebView2 ランタイムは Windows 11 に標準で入っている。MSIX には WebView2 のインストーラーが入らないので、Windows 10 で無い場合は
+  利用者が Microsoft の配布ページから入れる（直接ダウンロードの `-setup.exe` / `.msi` はインストール時に自動で入れる）
 - 版は `package.json` の `X.Y.Z` に `.0` を足した 4 桁になる（Store の規則）
 - ストア掲載 URL が決まったら replica-works の `apphosting.yaml` に `MAC_APP_STORE_URL` / `MICROSOFT_STORE_URL` を入れると、
   管理者ページにストアのボタンが出て `/download/mac-store`・`/download/windows-store` が転送するようになる
@@ -152,6 +158,9 @@ https://replica-works--replica-d2b34.asia-east1.hosted.app/__/auth/handler
 
 （Firebase コンソール → Authentication → 設定 → 承認済みドメインに同じホストが入っていることも確認。）
 
+アプリの窓の中で開けるのは本番サイトと、ログイン途中の Google（`*.google.com` / `*.youtube.com` / `accounts.google.co.jp`）だけ
+（`src-tauri/src/lib.rs` の `stays_inside`）。それ以外へ移動しようとすると既定ブラウザで開く。
+
 ## 開発
 
 ```bash
@@ -162,11 +171,14 @@ npm run build                                # src-tauri/target/release/bundle/ 
 npm run icon                                 # app-icon.png からアイコン一式を作り直す
 ```
 
+`REPLICA_WORKS_BASE_URL` を付けて配布用にビルドする場合は、`src-tauri/tauri.conf.json` の `csp`（`connect-src`）も同じホストに直す。
+
 要件: Node 22+、Rust（`brew install rust`）、Xcode Command Line Tools。Windows 版の生成は GitHub Actions に任せる。
 
 ## 構成
 
-- `ui/index.html` — 接続できなかったときの案内（Tauri の `frontendDist` として必要。通常は表示されない）
+- `ui/` — 起動時に出るローカル画面（`index.html` / `main.js` / `style.css`）。本番サイトの `/api/health` に届けば入口へ移り、
+  届かなければ案内と再試行を出す。Tauri API は使わない
 - `src-tauri/src/lib.rs` — 窓・メニュー・外部リンク・ダウンロードの扱い。本番 URL は `BASE_URL`、入口は `start_url()`（`/portal`）
-- `src-tauri/tauri.conf.json` — アプリ名・識別子 `com.replicallc.replicaworks.desktop`・バンドル設定
-- `src-tauri/capabilities/default.json` — ローカル画面に渡す権限（最小）。本番 URL には Tauri API を渡さない
+- `src-tauri/tauri.conf.json` — アプリ名・識別子 `com.replicallc.replicaworks`・ローカル画面の CSP・バンドル設定
+- `src-tauri/capabilities/default.json` — ローカル画面に渡す権限（空）。本番 URL にも別窓にも Tauri API を渡さない

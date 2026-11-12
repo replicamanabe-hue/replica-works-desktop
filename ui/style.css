@@ -1,0 +1,9 @@
+html, body { height: 100%; margin: 0; }
+body { font-family: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic UI", "Meiryo", system-ui, sans-serif; background: #fff; color: #13161a; display: flex; align-items: center; justify-content: center; -webkit-user-select: none; user-select: none; }
+main { text-align: center; }
+p { margin: 0 0 16px; font-size: 14px; color: #5c6168; }
+.eyebrow { font-size: 11px; letter-spacing: .2em; margin-bottom: 24px; }
+button { font: inherit; border: 1px solid #13161a; background: #fff; color: inherit; border-radius: 8px; padding: 10px 20px; cursor: pointer; }
+button:hover { background: #f6f6f6; }
+button:focus-visible { outline: 2px solid #edae4d; outline-offset: 2px; }
+[hidden] { display: none; }

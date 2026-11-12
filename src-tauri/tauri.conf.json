@@ -10,7 +10,8 @@
     "withGlobalTauri": false,
     "windows": [],
     "security": {
-      "csp": null
+      "csp": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src https://replica-works--replica-d2b34.asia-east1.hosted.app; base-uri 'none'; form-action 'none'",
+      "devCsp": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src https://replica-works--replica-d2b34.asia-east1.hosted.app http://localhost:* http://127.0.0.1:*; base-uri 'none'; form-action 'none'"
     }
   },
   "bundle": {

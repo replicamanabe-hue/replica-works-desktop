@@ -35,10 +35,12 @@ foreach ($a in "StoreLogo", "Square150x150Logo", "Square44x44Logo", "Square71x71
 
 $publisherDisplay = if ($env:MSIX_PUBLISHER_DISPLAY_NAME) { $env:MSIX_PUBLISHER_DISPLAY_NAME } else { "合同会社Replica" }
 $manifest = Get-Content -Raw -Encoding UTF8 "src-tauri/msix/AppxManifest.xml"
-$manifest = $manifest.Replace("__IDENTITY_NAME__", $env:MSIX_IDENTITY_NAME).
-  Replace("__PUBLISHER__", $env:MSIX_PUBLISHER).
-  Replace("__VERSION__", $msixVersion).
-  Replace("__PUBLISHER_DISPLAY_NAME__", $publisherDisplay)
+# 値は XML の属性・本文に入るので、& < > " ' を実体参照にしてから埋める
+function Escape-Xml([string]$s) { [System.Security.SecurityElement]::Escape($s) }
+$manifest = $manifest.Replace("__IDENTITY_NAME__", (Escape-Xml $env:MSIX_IDENTITY_NAME)).
+  Replace("__PUBLISHER__", (Escape-Xml $env:MSIX_PUBLISHER)).
+  Replace("__VERSION__", (Escape-Xml $msixVersion)).
+  Replace("__PUBLISHER_DISPLAY_NAME__", (Escape-Xml $publisherDisplay))
 [IO.File]::WriteAllText((Join-Path $stage "AppxManifest.xml"), $manifest, (New-Object System.Text.UTF8Encoding $false))
 
 $makeappx = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\makeappx.exe" -ErrorAction SilentlyContinue |

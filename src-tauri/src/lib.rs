@@ -1,52 +1,85 @@
 //! Replica Works デスクトップ版（Mac / Windows）。
 //! 本番 URL をネイティブ窓で表示する薄いシェル。入口はお客様ページのログイン画面で、
 //! 管理者はログイン後にメニュー「管理画面に切り替え」で管理画面へ入る（Web 側の /portal/switch）。
-//! Web 側には Tauri API を渡さない。ローカル HTML（ui/）は接続できなかったときの案内だけ。
+//! Web 側には Tauri API を渡さない。起動時はローカル HTML（ui/）が接続を確かめてから入口へ移る。
 
 use std::{
   collections::HashMap,
   path::PathBuf,
-  sync::Mutex,
+  sync::{LazyLock, Mutex},
 };
 
 use tauri::{
   menu::{AboutMetadata, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu},
-  webview::{DownloadEvent, NewWindowResponse},
-  AppHandle, Manager, Runtime, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+  webview::{DownloadEvent, NewWindowResponse, PageLoadEvent},
+  AppHandle, Manager, Runtime, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
 
-/// 本番 URL。ローカル確認は `REPLICA_WORKS_BASE_URL=http://localhost:3000 npm run dev` で差し替える
+/// 本番 URL。ローカル確認は `REPLICA_WORKS_BASE_URL=http://localhost:3000 npm run dev` で差し替える。
+/// 本番ビルドで差し替えるときは tauri.conf.json の csp（connect-src）も合わせる
 const BASE_URL: &str = match option_env!("REPLICA_WORKS_BASE_URL") {
   Some(v) => v,
   None => "https://replica-works--replica-d2b34.asia-east1.hosted.app",
 };
+static BASE: LazyLock<Url> = LazyLock::new(|| Url::parse(BASE_URL).expect("BASE_URL"));
 
-/// アプリ内（この窓）で開いてよいホスト。ログイン途中の Google / Firebase もここに含める。
-/// それ以外の http(s) と mailto: などは OS の既定ブラウザ・アプリに渡す
-fn stays_inside(url: &Url) -> bool {
-  match url.scheme() {
-    "tauri" | "about" | "blob" | "data" => return true,
-    "http" | "https" => {}
-    _ => return false,
-  }
-  let Some(host) = url.host_str() else { return false };
-  if let Ok(base) = Url::parse(BASE_URL) {
-    if base.host_str() == Some(host) {
-      return true;
-    }
-  }
-  matches!(host, "localhost" | "127.0.0.1" | "tauri.localhost")
-    || host == "accounts.google.com"
-    || host.ends_with(".google.com")
-    || host.ends_with(".googleapis.com")
-    || host.ends_with(".gstatic.com")
-    || host.ends_with(".firebaseapp.com")
-    || host.ends_with(".web.app")
+/// 同じオリジンのファイル（PDF など）を開く別窓のラベル。capabilities には載せない
+const VIEWER: &str = "viewer";
+
+fn is_loopback(host: &str) -> bool {
+  matches!(host, "localhost" | "127.0.0.1" | "[::1]")
 }
 
+/// 本番サイトと同じオリジンか（blob: は中のオリジンで比べる）
+fn is_base(url: &Url) -> bool {
+  url.origin() == BASE.origin()
+}
+
+/// 開発時だけ http の localhost を通す（デバッグビルド、または BASE_URL が http://localhost のとき）
+fn dev_mode() -> bool {
+  cfg!(debug_assertions) || (BASE.scheme() == "http" && BASE.host_str().is_some_and(is_loopback))
+}
+
+/// Google ログイン（リダイレクト式）の途中で通るホスト。authDomain は自ホストで /__/auth/* も自ホストが中継するので
+/// firebaseapp.com / web.app は通らない。Google 側は accounts.google.com のほか SetSID や iframe（macOS は iframe の
+/// 移動もここを通る）で accounts.youtube.com などを使うため、google.com / youtube.com のサブドメインは残す
+fn is_google_signin_host(host: &str) -> bool {
+  host == "accounts.google.com"
+    || host == "accounts.google.co.jp"
+    || host.ends_with(".google.com")
+    || host.ends_with(".youtube.com")
+}
+
+/// アプリ内（この窓）で開いてよい URL。本番サイトと、ログイン途中の Google だけ（https のみ）。
+/// それ以外の http(s) と mailto: / tel: は OS の既定ブラウザ・アプリに渡す
+fn stays_inside(url: &Url) -> bool {
+  if is_base(url) {
+    return true;
+  }
+  let host = url.host_str().unwrap_or_default();
+  match url.scheme() {
+    // ローカル画面（macOS は tauri://localhost）と、iframe の about:blank / about:srcdoc
+    "tauri" | "about" => true,
+    // ローカル画面（Windows は http://tauri.localhost。WebView2 の中で完結し、通信はしない）
+    "http" | "https" if host == "tauri.localhost" => true,
+    "https" => is_google_signin_host(host),
+    "http" => dev_mode() && is_loopback(host),
+    _ => false,
+  }
+}
+
+fn is_external_scheme(scheme: &str) -> bool {
+  matches!(scheme, "http" | "https" | "mailto" | "tel")
+}
+
+/// OS の既定ブラウザ・アプリで開く。file: / smb: / shell: / ms-*: などは OS に渡さない
 fn open_external<R: Runtime>(app: &AppHandle<R>, url: &Url) {
+  if !is_external_scheme(url.scheme()) {
+    log::warn!("外部で開かない種類の URL を無視しました（{}:）", url.scheme());
+    return;
+  }
   if let Err(e) = app.opener().open_url(url.as_str(), None::<&str>) {
     log::warn!("外部で開けませんでした {url}: {e}");
   }
@@ -59,6 +92,22 @@ struct Zoom(Mutex<f64>);
 /// 起動時に開くページ。お客様ページのログインが入口で、管理者はログイン後にメニューの「管理画面に切り替え」で管理画面へ
 fn start_url() -> Url {
   Url::parse(&format!("{}/portal", BASE_URL.trim_end_matches('/'))).expect("BASE_URL")
+}
+
+/// 同じオリジンの target=_blank（領収書・契約書 PDF・「新しいタブで開く」）はログイン Cookie が要るので、
+/// 既定ブラウザではなくアプリ内の別窓で開く。別窓は 1 枚だけで、開いていれば使い回す
+fn open_in_viewer(app: &AppHandle, url: Url) {
+  if let Some(win) = app.get_webview_window(VIEWER) {
+    navigate(&win, url);
+    return;
+  }
+  let app = app.clone();
+  // Windows は新規窓のハンドラの中で窓を作ると固まるので、別スレッドから作る
+  std::thread::spawn(move || {
+    if let Err(e) = build_window(&app, VIEWER, WebviewUrl::External(url)) {
+      log::warn!("別窓を開けませんでした: {e}");
+    }
+  });
 }
 
 fn navigate(win: &WebviewWindow, url: Url) {
@@ -181,9 +230,16 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 }
 
 fn on_menu(app: &AppHandle, event: MenuEvent) {
-  let Some(win) = app.get_webview_window("main") else { return };
+  let main = app.get_webview_window("main");
+  // 操作の対象は手前の窓（別窓でファイルを見ているときはそちら）
+  let focused = app.webview_windows().into_values().find(|w| w.is_focused().unwrap_or(false));
+  let Some(win) = focused.or_else(|| main.clone()) else { return };
   match event.id().as_ref() {
-    "home" => navigate(&win, start_url()),
+    "home" => {
+      let win = main.unwrap_or(win);
+      navigate(&win, start_url());
+      let _ = win.set_focus();
+    }
     "back" => {
       let _ = win.eval("history.back()");
     }
@@ -204,15 +260,13 @@ fn on_menu(app: &AppHandle, event: MenuEvent) {
       let _ = win.set_zoom(*z);
     }
     "open-web" => {
-      if let Ok(u) = win.url() {
-        // アプリ内のローカル画面（接続失敗など）なら入口を開く
-        let target = if stays_inside(&u) && u.scheme() != "tauri" && u.host_str() != Some("tauri.localhost") {
-          u
-        } else {
-          start_url()
-        };
-        open_external(app, &target);
-      }
+      // 本番サイトのページならその URL、ローカル画面・ログイン途中・URL が取れないときは入口を開く
+      let target = win
+        .url()
+        .ok()
+        .filter(|u| matches!(u.scheme(), "http" | "https") && is_base(u))
+        .unwrap_or_else(start_url);
+      open_external(app, &target);
     }
     _ => {}
   }
@@ -230,13 +284,111 @@ fn user_agent(version: &str) -> String {
   format!("{base} ReplicaWorksDesktop/{version}")
 }
 
+/// 窓を作る。main も別窓も同じハンドラ（移動先の制限・新規窓・ダウンロード）を付ける
+fn build_window(app: &AppHandle, label: &str, url: WebviewUrl) -> tauri::Result<WebviewWindow> {
+  let version = app.package_info().version.to_string();
+  let platform = if cfg!(target_os = "macos") { "macos" } else if cfg!(target_os = "windows") { "windows" } else { "linux" };
+  let init_script = format!(
+    r#"window.__REPLICA_DESKTOP__ = {{ platform: "{platform}", version: "{version}", startUrl: "{base}/portal" }};
+(function () {{ var f = function () {{ document.documentElement && document.documentElement.classList.add("replica-desktop"); }}; if (document.documentElement) f(); else document.addEventListener("DOMContentLoaded", f); }})();"#,
+    base = BASE_URL.trim_end_matches('/'),
+  );
+
+  let nav_handle = app.clone();
+  let new_window_handle = app.clone();
+  let dl_handle = app.clone();
+
+  let mut builder = WebviewWindowBuilder::new(app, label, url)
+    .title("Replica Works")
+    .min_inner_size(900.0, 600.0)
+    .center()
+    .user_agent(&user_agent(&version))
+    .initialization_script(init_script)
+    // Tauri のドラッグ＆ドロップ処理を切って、ページ側（HTML5）にファイルのドロップを届ける
+    .disable_drag_drop_handler()
+    .on_navigation(move |url| {
+      if stays_inside(url) {
+        true
+      } else {
+        open_external(&nav_handle, url);
+        false
+      }
+    })
+    .on_new_window(move |url, _features| {
+      // target=_blank / window.open。同じオリジンはアプリ内の別窓、それ以外は既定ブラウザへ（about:blank などは無視）
+      if matches!(url.scheme(), "http" | "https") && is_base(&url) {
+        open_in_viewer(&new_window_handle, url);
+      } else {
+        open_external(&new_window_handle, &url);
+      }
+      NewWindowResponse::Deny
+    })
+    .on_download(move |_webview, event| {
+      match event {
+        DownloadEvent::Requested { url, destination } => {
+          // 保存するのは本番サイトのファイルだけ（blob: も本番サイトで作られたものだけ）
+          if !is_base(&url) {
+            log::warn!("本番サイト以外からのダウンロードを止めました（{}:）", url.scheme());
+            return false;
+          }
+          // 保存先は OS の「ダウンロード」フォルダ。ファイル名は WebView が応答から決めたものを使う
+          if destination.parent().map(|p| p.as_os_str().is_empty()).unwrap_or(true) {
+            if let Ok(dir) = dl_handle.path().download_dir() {
+              let name = destination.file_name().map(|n| n.to_os_string()).unwrap_or_else(|| "download".into());
+              *destination = dir.join(name);
+            }
+          }
+          if let Ok(mut m) = dl_handle.state::<Downloads>().0.lock() {
+            m.insert(url.to_string(), destination.clone());
+          }
+        }
+        DownloadEvent::Finished { url, path, success } => {
+          let remembered = dl_handle.state::<Downloads>().0.lock().ok().and_then(|mut m| m.remove(&url.to_string()));
+          if success {
+            if let Some(p) = path.or(remembered) {
+              // 保存できたらフォルダで見せる
+              let _ = dl_handle.opener().reveal_item_in_dir(&p);
+            }
+          }
+        }
+        _ => {}
+      }
+      true
+    });
+
+  builder = if label == VIEWER {
+    // 別窓は中身が表示できると分かってから出す（「保存」で返るファイルは窓を出さずにダウンロードだけ行う）
+    builder.inner_size(1000.0, 800.0).visible(false).on_page_load(|win, payload| {
+      if matches!(payload.event(), PageLoadEvent::Started) {
+        let _ = win.show();
+        let _ = win.unminimize();
+        let _ = win.set_focus();
+      }
+    })
+  } else {
+    builder.inner_size(1280.0, 860.0)
+  };
+
+  builder.build()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
-    .plugin(tauri_plugin_window_state::Builder::default().build())
+    // 別窓は毎回同じ大きさ・非表示で作るので、位置と大きさの記憶から外す
+    .plugin(tauri_plugin_window_state::Builder::default().with_denylist(&[VIEWER]).build())
     .manage(Downloads(Mutex::new(HashMap::new())))
     .manage(Zoom(Mutex::new(1.0)))
+    .on_window_event(|window, event| {
+      // main を閉じたら別窓（非表示のままのこともある）も閉じて、アプリを終了できるようにする
+      if window.label() == "main"
+        && matches!(event, WindowEvent::Destroyed)
+        && let Some(viewer) = window.app_handle().get_webview_window(VIEWER)
+      {
+        let _ = viewer.close();
+      }
+    })
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
@@ -246,67 +398,9 @@ pub fn run() {
         )?;
       }
 
-      let version = app.package_info().version.to_string();
-      let platform = if cfg!(target_os = "macos") { "macos" } else if cfg!(target_os = "windows") { "windows" } else { "linux" };
-      let init_script = format!(
-        r#"window.__REPLICA_DESKTOP__ = {{ platform: "{platform}", version: "{version}", startUrl: "{base}/portal" }};
-(function () {{ var f = function () {{ document.documentElement && document.documentElement.classList.add("replica-desktop"); }}; if (document.documentElement) f(); else document.addEventListener("DOMContentLoaded", f); }})();"#,
-        base = BASE_URL.trim_end_matches('/'),
-      );
-
-      let nav_handle = app.handle().clone();
-      let new_window_handle = app.handle().clone();
-      let dl_handle = app.handle().clone();
-
-      // 入口はお客様ページ（ログイン画面）。ui/index.html は接続できなかったときの案内にだけ使う
-      let _win = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(start_url()))
-        .title("Replica Works")
-        .inner_size(1280.0, 860.0)
-        .min_inner_size(900.0, 600.0)
-        .center()
-        .user_agent(&user_agent(&version))
-        .initialization_script(init_script)
-        .on_navigation(move |url| {
-          if stays_inside(url) {
-            true
-          } else {
-            open_external(&nav_handle, url);
-            false
-          }
-        })
-        .on_new_window(move |url, _features| {
-          // target=_blank / window.open は常に既定ブラウザへ（PDF や外部サイト）
-          open_external(&new_window_handle, &url);
-          NewWindowResponse::Deny
-        })
-        .on_download(move |_webview, event| {
-          match event {
-            DownloadEvent::Requested { url, destination } => {
-              // 保存先は OS の「ダウンロード」フォルダ。ファイル名は WebView が応答から決めたものを使う
-              if destination.parent().map(|p| p.as_os_str().is_empty()).unwrap_or(true) {
-                if let Ok(dir) = dl_handle.path().download_dir() {
-                  let name = destination.file_name().map(|n| n.to_os_string()).unwrap_or_else(|| "download".into());
-                  *destination = dir.join(name);
-                }
-              }
-              if let Ok(mut m) = dl_handle.state::<Downloads>().0.lock() {
-                m.insert(url.to_string(), destination.clone());
-              }
-            }
-            DownloadEvent::Finished { url, path, success } => {
-              let remembered = dl_handle.state::<Downloads>().0.lock().ok().and_then(|mut m| m.remove(&url.to_string()));
-              if success {
-                if let Some(p) = path.or(remembered) {
-                  // 保存できたらフォルダで見せる
-                  let _ = dl_handle.opener().reveal_item_in_dir(&p);
-                }
-              }
-            }
-            _ => {}
-          }
-          true
-        })
-        .build()?;
+      // 最初はローカル画面（ui/index.html）。本番サイトに届くと分かってから入口（お客様ページのログイン）へ移り、
+      // 届かなければ案内と再試行を出す
+      build_window(app.handle(), "main", WebviewUrl::App("index.html".into()))?;
 
       let menu = build_menu(app.handle())?;
       app.set_menu(menu)?;
@@ -315,4 +409,73 @@ pub fn run() {
     })
     .run(tauri::generate_context!())
     .expect("error while building tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn u(s: &str) -> Url {
+    Url::parse(s).unwrap()
+  }
+
+  // 既定の BASE_URL（本番）でビルドしたときの決まり。REPLICA_WORKS_BASE_URL を付けたビルドでは走らせない
+  const PROD: &str = "https://replica-works--replica-d2b34.asia-east1.hosted.app";
+
+  #[test]
+  fn inside() {
+    if BASE_URL != PROD {
+      return;
+    }
+    for ok in [
+      "https://replica-works--replica-d2b34.asia-east1.hosted.app/portal",
+      "https://replica-works--replica-d2b34.asia-east1.hosted.app/__/auth/handler?x=1",
+      "blob:https://replica-works--replica-d2b34.asia-east1.hosted.app/0b2f",
+      "https://accounts.google.com/o/oauth2/auth",
+      "https://accounts.youtube.com/accounts/SetSID",
+      "tauri://localhost/index.html",
+      "http://tauri.localhost/index.html",
+      "about:blank",
+    ] {
+      assert!(stays_inside(&u(ok)), "{ok}");
+    }
+    for ng in [
+      "http://replica-works--replica-d2b34.asia-east1.hosted.app/portal",
+      "https://replica-works--replica-d2b34.asia-east1.hosted.app.example.com/",
+      "https://evil.web.app/",
+      "https://evil.firebaseapp.com/",
+      "https://replica-d2b34.firebaseapp.com/__/auth/handler",
+      "https://storage.googleapis.com/x",
+      "https://www.gstatic.com/x",
+      "https://notgoogle.com/",
+      "https://evilgoogle.com/",
+      "http://accounts.google.com/",
+      "blob:https://example.com/0b2f",
+      "data:text/html,<p>x",
+      "file:///etc/passwd",
+    ] {
+      assert!(!stays_inside(&u(ng)), "{ng}");
+    }
+    // http の localhost はデバッグビルドだけ
+    assert_eq!(stays_inside(&u("http://localhost:3000/")), cfg!(debug_assertions));
+    assert_eq!(stays_inside(&u("http://127.0.0.1:9299/emulator/auth/handler")), cfg!(debug_assertions));
+  }
+
+  #[test]
+  fn external_and_download() {
+    for ok in ["http", "https", "mailto", "tel"] {
+      assert!(is_external_scheme(ok));
+    }
+    for ng in ["file", "smb", "shell", "ms-settings", "about", "blob", "data", "javascript", "tauri"] {
+      assert!(!is_external_scheme(ng));
+    }
+    if BASE_URL != PROD {
+      return;
+    }
+    assert!(is_base(&u("https://replica-works--replica-d2b34.asia-east1.hosted.app/api/files/1")));
+    assert!(is_base(&u("blob:https://replica-works--replica-d2b34.asia-east1.hosted.app/0b2f")));
+    assert!(!is_base(&u("https://storage.googleapis.com/bucket/file.exe")));
+    assert!(!is_base(&u("blob:https://accounts.google.com/0b2f")));
+    assert!(!is_base(&u("data:application/octet-stream;base64,AAAA")));
+  }
 }

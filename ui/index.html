@@ -4,22 +4,18 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Replica Works</title>
-<style>
-  html, body { height: 100%; margin: 0; }
-  body { font-family: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic UI", "Meiryo", system-ui, sans-serif; background: #fff; color: #13161a; display: flex; align-items: center; justify-content: center; -webkit-user-select: none; user-select: none; }
-  main { text-align: center; }
-  p { margin: 0 0 16px; font-size: 14px; color: #5c6168; }
-  .eyebrow { font-size: 11px; letter-spacing: .2em; margin-bottom: 24px; }
-  button { font: inherit; border: 1px solid #13161a; background: #fff; color: inherit; border-radius: 8px; padding: 10px 20px; cursor: pointer; }
-  button:hover { background: #f6f6f6; }
-  button:focus-visible { outline: 2px solid #edae4d; outline-offset: 2px; }
-</style>
+<!-- CSP（tauri.conf.json）で外部ファイルだけを許しているので、スタイルとスクリプトは同じフォルダのファイルに置く -->
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
 <main>
   <p class="eyebrow">REPLICA WORKS</p>
-  <p>Replica Works に接続できませんでした。<br>インターネット接続を確認して、もう一度お試しください。</p>
-  <button type="button" onclick="location.replace((window.__REPLICA_DESKTOP__ && window.__REPLICA_DESKTOP__.startUrl) || 'https://replica-works--replica-d2b34.asia-east1.hosted.app/portal')">再試行</button>
+  <p id="connecting" role="status">接続しています…</p>
+  <div id="notice" hidden>
+    <p role="alert">Replica Works に接続できませんでした。<br>インターネット接続を確認して、もう一度お試しください。</p>
+    <button type="button" id="retry">再試行</button>
+  </div>
 </main>
+<script src="main.js"></script>
 </body>
 </html>

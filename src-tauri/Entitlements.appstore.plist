@@ -11,6 +11,9 @@
   <!-- ダウンロードを ~/Downloads に保存して Finder で表示する -->
   <key>com.apple.security.files.downloads.read-write</key>
   <true/>
+  <!-- ファイル選択（<input type=file> の NSOpenPanel）で利用者が選んだファイルの読み書き。アップロードに必要 -->
+  <key>com.apple.security.files.user-selected.read-write</key>
+  <true/>
   <!-- チーム ID + バンドル ID（Provisioning Profile と一致させる） -->
   <key>com.apple.application-identifier</key>
   <string>LD6XFR33N5.com.replicallc.replicaworks</string>

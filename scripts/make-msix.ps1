@@ -29,7 +29,7 @@ $stage = Join-Path $root "dist/msix"
 if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 New-Item -ItemType Directory -Path (Join-Path $stage "Assets") | Out-Null
 Copy-Item $exe (Join-Path $stage "ReplicaWorks.exe")
-foreach ($a in "StoreLogo", "Square150x150Logo", "Square44x44Logo", "Square71x71Logo", "Square310x310Logo") {
+foreach ($a in "StoreLogo", "Square150x150Logo", "Square44x44Logo") {
   Copy-Item "src-tauri/icons/$a.png" (Join-Path $stage "Assets")
 }
 

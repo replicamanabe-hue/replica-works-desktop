@@ -7,3 +7,5 @@ button { font: inherit; border: 1px solid #13161a; background: #fff; color: inhe
 button:hover { background: #f6f6f6; }
 button:focus-visible { outline: 2px solid #edae4d; outline-offset: 2px; }
 [hidden] { display: none; }
+.drag { display: none; }
+.overlay .drag { display: block; position: fixed; top: 0; left: 0; right: 0; height: 48px; }

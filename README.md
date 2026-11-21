@@ -24,26 +24,19 @@ Web 側（replica-works）はデスクトップ版を UA の `ReplicaWorksDeskto
 
 ## 配布
 
-1. タグを push すると GitHub Actions（`.github/workflows/release.yml`）が Mac（Universal `.dmg`）と
-   Windows（`-setup.exe` と `.msi`）を作り、GitHub Release に載せる。Release は下書きで作り、両方のビルドが
-   成功したときに公開する。タグと 3 つの version が食い違っていると最初に止まる。
-2. replica-works 側で `node scripts/upload-desktop.mjs vX.Y.Z` を実行すると、その Release のファイルを
-   Firebase Storage の `desktop/` にコピーし、`latest.json` を更新する（GitHub の Release 配信が不安定だったため、
-   ユーザーへの配布は Storage から行う）。
+**配布はストアだけ**（Mac App Store / Microsoft Store。2026-11-21 の判断で、直接ダウンロードの `.dmg` / `.exe` はやめた）。
+前に配った `/download/mac`・`/download/windows`・`/download/windows-msi` は、ストアの掲載 URL を設定するとストアへ転送される。
+
+1. タグを push すると GitHub Actions（`.github/workflows/release.yml`）が Mac と Windows をビルドし、
+   GitHub Release に載せる。Microsoft Store に出す `.msix` はここで作る。タグと 3 つの version が食い違っていると最初に止まる。
+2. Mac App Store の `.pkg` は手元の Mac で `scripts/appstore-mac.sh`（下記）。
 
 ```bash
 # 版を上げる: package.json / src-tauri/tauri.conf.json / src-tauri/Cargo.toml の version をそろえてから
-git tag v1.0.2 && git push origin v1.0.2
-# Actions が終わったら（replica-works で）
-node scripts/upload-desktop.mjs v1.0.2
+git tag v1.0.4 && git push origin v1.0.4
 ```
 
-ダウンロード（誰でも可）:
-- Mac: https://replica-works--replica-d2b34.asia-east1.hosted.app/download/mac
-- Windows: https://replica-works--replica-d2b34.asia-east1.hosted.app/download/windows （MSI は `/download/windows-msi`）
-
-管理画面「管理者」ページにも同じリンクと現在の版が出る。Windows の Actions ジョブが 504 で落ちたら
-`gh run rerun <run-id> --failed` で再実行する（それまで Release は下書きのまま）。
+Windows の Actions ジョブが 504 で落ちたら `gh run rerun <run-id> --failed` で再実行する（それまで Release は下書きのまま）。
 
 ### Mac の署名・公証（任意だが推奨）
 
@@ -61,12 +54,11 @@ Actions が署名と公証まで行う。
 | `APPLE_PASSWORD` | その Apple ID の **App 用パスワード**（appleid.apple.com で発行） |
 | `APPLE_TEAM_ID` | `LD6XFR33N5` |
 
-直接ダウンロードの Windows 版は当面未署名（初回に SmartScreen の「詳細情報」→「実行」が必要）。ストア版（下記）にはこの手順はない。
+直接ダウンロードはやめたので、この署名・公証は使っていない（ストア版はストアが署名する）。
 
 ## 公式ストアでの配布（Mac App Store / Microsoft Store）
 
-ユーザーへの本来の入口はストア。直接ダウンロードは審査待ちやストアを使えない環境向けの保険として残す。
-ストア版はストアが署名・配信・更新を行うので、未署名の警告も自前の自動更新も要らない。
+ユーザーへの入口はストアだけ。ストア版はストアが署名・配信・更新を行うので、未署名の警告も自前の自動更新も要らない。
 審査員向けには replica-works の `REVIEW_EMAIL` / `REVIEW_CODE`（固定コードで `/portal` に入れるデモログイン）を審査メモに書く。
 
 ### Mac App Store

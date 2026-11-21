@@ -1,7 +1,7 @@
 //! Replica Works デスクトップ版（Mac / Windows）。
 //! 本番 URL をネイティブ窓で表示する薄いシェル。入口はお客様ページのログイン画面で、
 //! 管理者はログイン後にメニュー「管理画面に切り替え」で管理画面へ入る（Web 側の /portal/switch）。
-//! Web 側には Tauri API を渡さない。起動時はローカル HTML（ui/）が接続を確かめてから入口へ移る。
+//! Web 側には Tauri API を渡さない（Mac の窓を帯でドラッグする 2 つの命令だけ。overlay_titlebar）。起動時はローカル HTML（ui/）が接続を確かめてから入口へ移る。
 
 use std::{
   collections::HashMap,
@@ -12,7 +12,7 @@ use std::{
 use tauri::{
   menu::{AboutMetadata, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu},
   webview::{DownloadEvent, NewWindowResponse, PageLoadEvent},
-  AppHandle, Manager, Runtime, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
+  AppHandle, Manager, RunEvent, Runtime, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
@@ -27,6 +27,12 @@ static BASE: LazyLock<Url> = LazyLock::new(|| Url::parse(BASE_URL).expect("BASE_
 
 /// 同じオリジンのファイル（PDF など）を開く別窓のラベル。capabilities には載せない
 const VIEWER: &str = "viewer";
+
+/// Mac の main の窓は、タイトルバーを消して Web の上部の帯と一体にする（信号ボタンは帯の左に重なる）。
+/// 帯は Web 側で data-tauri-drag-region を付け、そこをドラッグすると窓が動く・ダブルクリックで拡大する
+const OVERLAY_TITLEBAR: bool = cfg!(target_os = "macos");
+/// 窓を動かす命令だけを、main の窓の本番サイト（とローカル画面）に許す
+const DRAG_PERMISSIONS: [&str; 2] = ["core:window:allow-start-dragging", "core:window:allow-internal-toggle-maximize"];
 
 fn is_loopback(host: &str) -> bool {
   matches!(host, "localhost" | "127.0.0.1" | "[::1]")
@@ -92,6 +98,75 @@ struct Zoom(Mutex<f64>);
 /// 起動時に開くページ。お客様ページのログインが入口で、管理者はログイン後にメニューの「管理画面に切り替え」で管理画面へ
 fn start_url() -> Url {
   Url::parse(&format!("{}/portal", BASE_URL.trim_end_matches('/'))).expect("BASE_URL")
+}
+
+/// 次の起動で開き直してよいページ（ふつうの画面だけ。確認・同意・招待のトークン入りの URL、ファイル、API、ログインは覚えない）
+const RESUME_EXACT: &[&str] = &["/", "/portal"];
+const RESUME_PREFIX: &[&str] = &[
+  "/projects", "/tasks", "/schedule", "/chat", "/contracts", "/customers", "/accounting", "/admins",
+  "/portal/chat", "/portal/documents", "/portal/drawings", "/portal/media", "/portal/schedule", "/portal/account", "/portal/guide",
+];
+/// 覚えるクエリ（案件ページのタブ・顧客の検索・会計の年月）
+const RESUME_QUERY: &[&str] = &["tab", "q", "y", "m"];
+const LAST_PAGE_FILE: &str = "last-page.txt";
+
+/// 本番サイトのページなら、次の起動で開き直す「パス?クエリ」を返す。覚えないページは None
+fn resumable(url: &Url) -> Option<String> {
+  if !matches!(url.scheme(), "http" | "https") || !is_base(url) {
+    return None;
+  }
+  let path = url.path();
+  let ok = RESUME_EXACT.contains(&path)
+    || RESUME_PREFIX.iter().any(|p| path == *p || path.strip_prefix(p).is_some_and(|rest| rest.starts_with('/')));
+  if !ok || path.len() > 300 {
+    return None;
+  }
+  let query: Vec<(String, String)> = url
+    .query_pairs()
+    .filter(|(k, v)| RESUME_QUERY.contains(&k.as_ref()) && v.len() <= 100)
+    .map(|(k, v)| (k.into_owned(), v.into_owned()))
+    .collect();
+  let mut out = path.to_string();
+  if !query.is_empty() {
+    out.push('?');
+    out.push_str(&url::form_urlencoded::Serializer::new(String::new()).extend_pairs(query).finish());
+  }
+  // 初期化スクリプトの文字列に入れるので、URL として安全な文字だけ（Url が % で符号化した後の形）
+  out
+    .chars()
+    .all(|c| c.is_ascii_alphanumeric() || "/_-.~%?=&+".contains(c))
+    .then_some(out)
+}
+
+/// ログイン画面（ログアウト・ログイン切れ）に来たら、覚えたページを忘れる（次に使う人に前の人の画面を開かせない）
+fn is_login_page(url: &Url) -> bool {
+  is_base(url) && matches!(url.path(), "/login" | "/portal/login")
+}
+
+fn last_page_path<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
+  app.path().app_data_dir().ok().map(|d| d.join(LAST_PAGE_FILE))
+}
+
+/// 前回の最後のページ（本番サイトの URL）。無い・読めない・覚えてよい形でないときは None
+fn resume_url<R: Runtime>(app: &AppHandle<R>) -> Option<Url> {
+  let saved = std::fs::read_to_string(last_page_path(app)?).ok()?;
+  let url = BASE.join(saved.trim()).ok()?;
+  resumable(&url).and_then(|p| BASE.join(&p).ok())
+}
+
+/// main の窓でページを読み終えたら、覚える・忘れる
+fn remember_page<R: Runtime>(app: &AppHandle<R>, url: &Url) {
+  let Some(file) = last_page_path(app) else { return };
+  if let Some(p) = resumable(url) {
+    if let Some(dir) = file.parent() {
+      let _ = std::fs::create_dir_all(dir);
+    }
+    if let Err(e) = std::fs::write(&file, p) {
+      log::warn!("最後のページを覚えられませんでした: {e}");
+    }
+  } else if is_login_page(url) {
+    let _ = std::fs::remove_file(&file);
+  }
 }
 
 /// 同じオリジンの target=_blank（領収書・契約書 PDF・「新しいタブで開く」）はログイン Cookie が要るので、
@@ -288,8 +363,12 @@ fn user_agent(version: &str) -> String {
 fn build_window(app: &AppHandle, label: &str, url: WebviewUrl) -> tauri::Result<WebviewWindow> {
   let version = app.package_info().version.to_string();
   let platform = if cfg!(target_os = "macos") { "macos" } else if cfg!(target_os = "windows") { "windows" } else { "linux" };
+  // 起動時の画面（ui/main.js）は、接続を確かめたあと resumeUrl（前回の最後のページ）があればそこへ、無ければ入口へ移る
+  let resume = if label == "main" { resume_url(app).map(|u| u.to_string()).unwrap_or_default() } else { String::new() };
+  // titlebar: "overlay" のとき、Web 側は帯の左に信号ボタンの分を空け、帯をドラッグできるようにする（1.0.3 までは付かない）
+  let titlebar = if OVERLAY_TITLEBAR && label == "main" { "overlay" } else { "native" };
   let init_script = format!(
-    r#"window.__REPLICA_DESKTOP__ = {{ platform: "{platform}", version: "{version}", startUrl: "{base}/portal" }};
+    r#"window.__REPLICA_DESKTOP__ = {{ platform: "{platform}", version: "{version}", titlebar: "{titlebar}", startUrl: "{base}/portal", resumeUrl: "{resume}" }};
 (function () {{ var f = function () {{ document.documentElement && document.documentElement.classList.add("replica-desktop"); }}; if (document.documentElement) f(); else document.addEventListener("DOMContentLoaded", f); }})();"#,
     base = BASE_URL.trim_end_matches('/'),
   );
@@ -366,10 +445,27 @@ fn build_window(app: &AppHandle, label: &str, url: WebviewUrl) -> tauri::Result<
       }
     })
   } else {
-    builder.inner_size(1280.0, 860.0)
+    let page_handle = app.clone();
+    overlay_titlebar(builder.inner_size(1280.0, 860.0)).on_page_load(move |_win, payload| {
+      if matches!(payload.event(), PageLoadEvent::Finished) {
+        remember_page(&page_handle, payload.url());
+      }
+    })
   };
 
   builder.build()
+}
+
+/// Mac: タイトルバーを透明にして中身を窓の一番上から描く。信号ボタンは高さ 48px の帯の縦の真ん中に置く
+#[cfg(target_os = "macos")]
+fn overlay_titlebar<'a, R: Runtime, M: Manager<R>>(b: WebviewWindowBuilder<'a, R, M>) -> WebviewWindowBuilder<'a, R, M> {
+  b.title_bar_style(tauri::TitleBarStyle::Overlay)
+    .hidden_title(true)
+    .traffic_light_position(tauri::LogicalPosition::new(18.0, 24.0))
+}
+#[cfg(not(target_os = "macos"))]
+fn overlay_titlebar<'a, R: Runtime, M: Manager<R>>(b: WebviewWindowBuilder<'a, R, M>) -> WebviewWindowBuilder<'a, R, M> {
+  b
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -381,6 +477,10 @@ pub fn run() {
     .manage(Downloads(Mutex::new(HashMap::new())))
     .manage(Zoom(Mutex::new(1.0)))
     .on_window_event(|window, event| {
+      // 画面の中の移動（Next.js のリンク）は読み込みの合図が出ないので、閉じるときに今のページを覚える
+      if window.label() == "main" && matches!(event, WindowEvent::CloseRequested { .. }) {
+        remember_current(window.app_handle());
+      }
       // main を閉じたら別窓（非表示のままのこともある）も閉じて、アプリを終了できるようにする
       if window.label() == "main"
         && matches!(event, WindowEvent::Destroyed)
@@ -400,6 +500,13 @@ pub fn run() {
 
       // 最初はローカル画面（ui/index.html）。本番サイトに届くと分かってから入口（お客様ページのログイン）へ移り、
       // 届かなければ案内と再試行を出す
+      if OVERLAY_TITLEBAR {
+        let mut cap = tauri::ipc::CapabilityBuilder::new("overlay-drag").remote(format!("{}/*", BASE_URL.trim_end_matches('/'))).window("main");
+        for p in DRAG_PERMISSIONS {
+          cap = cap.permission(p);
+        }
+        app.add_capability(cap)?;
+      }
       build_window(app.handle(), "main", WebviewUrl::App("index.html".into()))?;
 
       let menu = build_menu(app.handle())?;
@@ -407,8 +514,21 @@ pub fn run() {
       app.on_menu_event(on_menu);
       Ok(())
     })
-    .run(tauri::generate_context!())
-    .expect("error while building tauri application");
+    .build(tauri::generate_context!())
+    .expect("error while building tauri application")
+    .run(|app, event| {
+      // Mac の ⌘Q など、窓を閉じずに終えるとき
+      if matches!(event, RunEvent::ExitRequested { .. }) {
+        remember_current(app);
+      }
+    });
+}
+
+/// main の窓の今の URL を覚える（画面の中の移動のあとでも、WebView の URL は今のページを指す）
+fn remember_current<R: Runtime>(app: &AppHandle<R>) {
+  if let Some(url) = app.get_webview_window("main").and_then(|w| w.url().ok()) {
+    remember_page(app, &url);
+  }
 }
 
 #[cfg(test)]
@@ -459,6 +579,35 @@ mod tests {
     // http の localhost はデバッグビルドだけ
     assert_eq!(stays_inside(&u("http://localhost:3000/")), cfg!(debug_assertions));
     assert_eq!(stays_inside(&u("http://127.0.0.1:9299/emulator/auth/handler")), cfg!(debug_assertions));
+  }
+
+  #[test]
+  fn resume() {
+    if BASE_URL != PROD {
+      return;
+    }
+    let b = |p: &str| u(&format!("{PROD}{p}"));
+    for (from, want) in [
+      ("/", "/"),
+      ("/portal", "/portal"),
+      ("/tasks", "/tasks"),
+      ("/projects/abc?tab=chat", "/projects/abc?tab=chat"),
+      ("/projects/abc?tab=chat&token=x#top", "/projects/abc?tab=chat"),
+      ("/customers?q=%E7%94%B0%E4%B8%AD", "/customers?q=%E7%94%B0%E4%B8%AD"),
+      ("/accounting/expenses?m=2026-11", "/accounting/expenses?m=2026-11"),
+      ("/portal/documents", "/portal/documents"),
+    ] {
+      assert_eq!(resumable(&b(from)).as_deref(), Some(want), "{from}");
+    }
+    for ng in [
+      "/sign/tok123", "/portal/confirm/tok", "/portal/join/CODE", "/portal/login", "/login", "/api/files/1",
+      "/download/x", "/portal/enter", "/portal/switch", "/portal/projects/abc", "/oauth/authorize", "/tasksx", "/__/auth/handler",
+    ] {
+      assert!(resumable(&b(ng)).is_none(), "{ng}");
+    }
+    assert!(resumable(&u("https://example.com/tasks")).is_none());
+    assert!(resumable(&u("tauri://localhost/index.html")).is_none());
+    assert!(is_login_page(&b("/portal/login?auto=0")) && is_login_page(&b("/login")) && !is_login_page(&b("/tasks")));
   }
 
   #[test]

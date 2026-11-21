@@ -1,7 +1,7 @@
-# タグ v* を push すると Mac（Universal）と Windows（x64）の配布物を作って GitHub Release に載せる。
-# Release は最初に下書きで作り、Mac・Windows の両方が成功したときだけ公開する（片方だけの Release を出さない）。
-# Mac の署名・公証は secrets が揃っているときだけ行う（無ければ未署名で出る。初回起動は「システム設定 → プライバシーとセキュリティ → このまま開く」）。
-# Windows は Variables に MSIX_IDENTITY_NAME / MSIX_PUBLISHER があるとき Microsoft Store 提出用の .msix も作る（未署名。Store が署名する）。
+# タグ v* を push すると Windows（x64）をビルドし、Microsoft Store 提出用の .msix だけを GitHub Release に載せる。
+# 配布はストアだけ。.dmg / .exe / .msi などのインストーラーは作らない・載せない。
+# Release は最初に下書きで作り、.msix が揃ったときだけ公開する。
+# .msix は未署名（Store が署名する）。Variables に MSIX_IDENTITY_NAME / MSIX_PUBLISHER が要る（無いと止まる）。
 # Mac App Store 用の .pkg は手元の Mac で scripts/appstore-mac.sh（証明書と Provisioning Profile が要るため）。
 # 外部の Action はコミット SHA で固定する（タグは書き換えられるため）。上げるときは SHA と後ろの版コメントを一緒に直す。
 name: release
@@ -63,8 +63,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
           NOTES: |
-            Mac: `.dmg` を開いて Replica Works をアプリケーションにドラッグ。
-            Windows: `-setup.exe` を実行。
+            Microsoft Store 提出用の .msix です。アプリは Mac App Store / Microsoft Store から入れてください。
         run: |
           id=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq "[.[] | select(.tag_name == \"$TAG\")][0].id // empty")
           if [ -z "$id" ]; then
@@ -74,22 +73,10 @@ jobs:
 
   build:
     needs: prepare
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: macos-latest
-            args: --target universal-apple-darwin
-          - platform: windows-latest
-            args: ""
-    runs-on: ${{ matrix.platform }}
-    # 配布物を Release に添付するので書き込みが要る
+    runs-on: windows-latest
+    # .msix を Release に添付するので書き込みが要る
     permissions:
       contents: write
-    env:
-      # Apple の secrets が揃っているかどうかだけ（値そのものはここに置かず、使うステップにだけ渡す）
-      MAC_SIGN: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
-      MAC_NOTARIZE: ${{ secrets.APPLE_ID != '' && secrets.APPLE_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -103,7 +90,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable（2026-10-16 時点）
         with:
           toolchain: stable
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
@@ -111,55 +97,12 @@ jobs:
 
       - run: npm ci
 
-      # ビルドして下書き Release に添付する。同じ内容のステップが 3 つあるのは、Apple の secrets を
-      # 必要なステップの env にだけ渡すため（空文字で渡すと Tauri が証明書の取り込みや公証を試みて失敗するので、
-      # 揃っている組み合わせごとに分けている）。実行されるのは 1 つだけ
+      # exe だけ作る（.exe / .msi のインストーラーは作らない。直接配布はしない）
+      - name: Build
+        run: npx tauri build --no-bundle
 
-      # Windows と、署名用の secrets が無い Mac（未署名）
-      - name: Build (unsigned)
-        if: runner.os != 'macOS' || env.MAC_SIGN != 'true'
-        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        with:
-          releaseId: ${{ needs.prepare.outputs.release_id }}
-          tagName: ${{ github.ref_name }}
-          args: ${{ matrix.args }}
-
-      # Mac: 署名だけ（APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD / APPLE_SIGNING_IDENTITY がある）
-      - name: Build (macOS, signed)
-        if: runner.os == 'macOS' && env.MAC_SIGN == 'true' && env.MAC_NOTARIZE != 'true'
-        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        with:
-          releaseId: ${{ needs.prepare.outputs.release_id }}
-          tagName: ${{ github.ref_name }}
-          args: ${{ matrix.args }}
-
-      # Mac: 署名と公証（上の 3 つに加えて APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID もある）
-      - name: Build (macOS, signed and notarized)
-        if: runner.os == 'macOS' && env.MAC_SIGN == 'true' && env.MAC_NOTARIZE == 'true'
-        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        with:
-          releaseId: ${{ needs.prepare.outputs.release_id }}
-          tagName: ${{ github.ref_name }}
-          args: ${{ matrix.args }}
-
-      # Microsoft Store 提出用の MSIX（Partner Center の製品 ID を Variables に入れてあるときだけ）
+      # Microsoft Store 提出用の MSIX を作って Release に添付する
       - name: MSIX for Microsoft Store
-        if: runner.os == 'Windows' && vars.MSIX_IDENTITY_NAME != '' && vars.MSIX_PUBLISHER != ''
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -169,7 +112,7 @@ jobs:
           MSIX_PUBLISHER_DISPLAY_NAME: ${{ vars.MSIX_PUBLISHER_DISPLAY_NAME }}
         run: ./scripts/make-msix.ps1 -Tag $env:RELEASE_TAG
 
-  # Mac・Windows の両方が成功したら公開する。片方が落ちたら下書きのまま残るので、
+  # ビルドが成功したら公開する。落ちたら下書きのまま残るので、
   # `gh run rerun <run-id> --failed` で再実行すれば続きから公開まで進む
   publish:
     needs: [prepare, build]

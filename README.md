@@ -27,8 +27,8 @@ Web 側（replica-works）はデスクトップ版を UA の `ReplicaWorksDeskto
 **配布はストアだけ**（Mac App Store / Microsoft Store。2026-11-21 の判断で、直接ダウンロードの `.dmg` / `.exe` はやめた）。
 前に配った `/download/mac`・`/download/windows`・`/download/windows-msi` は、ストアの掲載 URL を設定するとストアへ転送される。
 
-1. タグを push すると GitHub Actions（`.github/workflows/release.yml`）が Mac と Windows をビルドし、
-   GitHub Release に載せる。Microsoft Store に出す `.msix` はここで作る。タグと 3 つの version が食い違っていると最初に止まる。
+1. タグを push すると GitHub Actions（`.github/workflows/release.yml`）が Windows をビルドし、
+   Microsoft Store に出す `.msix` だけを GitHub Release に載せる（インストーラーは作らない）。タグと 3 つの version が食い違っていると最初に止まる。
 2. Mac App Store の `.pkg` は手元の Mac で `scripts/appstore-mac.sh`（下記）。
 
 ```bash
@@ -131,7 +131,7 @@ Partner Center の提出でその `.msix` をアップロードし、審査に�
 「デスクトップ（Win32）アプリのため」と書く。
 
 - WebView2 ランタイムは Windows 11 に標準で入っている。MSIX には WebView2 のインストーラーが入らないので、Windows 10 で無い場合は
-  利用者が Microsoft の配布ページから入れる（直接ダウンロードの `-setup.exe` / `.msi` はインストール時に自動で入れる）
+  利用者が Microsoft の配布ページから入れる
 - 版は `package.json` の `X.Y.Z` に `.0` を足した 4 桁になる（Store の規則）
 - ストア掲載 URL が決まったら replica-works の `apphosting.yaml` に `MAC_APP_STORE_URL` / `MICROSOFT_STORE_URL` を入れると、
   管理者ページにストアのボタンが出て `/download/mac-store`・`/download/windows-store` が転送するようになる
